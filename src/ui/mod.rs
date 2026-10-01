@@ -274,6 +274,29 @@ mod tests {
     }
 
     #[test]
+    fn preview_renders_obsidian_callouts_and_toggles_foldable_ones() {
+        let mut fixture = GoldenApp::with_content("> [!warning]- Mind the **gap**\n> Hidden body\n\n> [!tip]\n> Shown body\n> - listed\n>\n> > nested quote\n\nAfter\n");
+        let render = |fixture: &mut GoldenApp| {
+            let buffer = draw(fixture, 100, 20);
+            (0..buffer.area.height).map(|y| row_text(&buffer, y)).collect::<Vec<_>>().join("\n")
+        };
+        let content = render(&mut fixture);
+        assert!(content.contains("┃ ⚠ Mind the gap ▸"), "{content}");
+        assert!(!content.contains("Hidden body"), "{content}");
+        assert!(content.contains("┃ ✦ Tip "), "{content}");
+        assert!(content.contains("┃ Shown body"), "{content}");
+        assert!(content.contains("┃ • listed"), "{content}");
+        assert!(content.contains("┃ ┃ nested quote"), "{content}");
+        assert!(!content.contains("[!"), "{content}");
+        assert!(!fixture.app.is_callout_foldable_at(3));
+
+        fixture.app.toggle_callout_fold_at(0);
+        let content = render(&mut fixture);
+        assert!(content.contains("┃ ⚠ Mind the gap ▾"), "{content}");
+        assert!(content.contains("┃ Hidden body"), "{content}");
+    }
+
+    #[test]
     fn preview_connects_only_nested_tasks_and_keeps_them_toggleable() {
         let mut fixture = GoldenApp::with_content("- [ ] parent\n    - [ ] first child\n    - [ ] second child\n        - [ ] grandchild\n");
         let buffer = draw(&mut fixture, 100, 20);

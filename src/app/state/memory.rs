@@ -142,6 +142,7 @@ fn content_item_bytes(item: &ContentItem) -> usize {
         ContentItem::TableRow { cells, .. } => cells.len() * std::mem::size_of::<DocumentRange>(),
         ContentItem::Details { content_lines, .. } => content_lines.len() * std::mem::size_of::<u32>(),
         ContentItem::TextLine { .. }
+        | ContentItem::Callout { .. }
         | ContentItem::MathBlock { .. }
         | ContentItem::Image { .. }
         | ContentItem::CodeLine { .. }

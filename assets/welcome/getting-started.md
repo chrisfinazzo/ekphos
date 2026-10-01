@@ -220,6 +220,25 @@ fn main() {
 > Blockquotes are rendered with a colored border.
 > Great for highlighting important information.
 
+### Callouts
+
+Obsidian callouts turn a blockquote into a titled, colored block. Start its first line with `[!type]`:
+
+> [!note]
+> A callout without a title uses its type as the title.
+
+> [!tip] Callouts can have custom titles
+> The body supports **formatting**, [[02-Demo Note|links]], `code`, and lists:
+> - 13 types, from `note` and `tip` to `warning` and `bug`
+> - Obsidian aliases such as `tldr`, `faq`, and `error`
+
+> [!warning]- Add `-` to collapse a callout
+> Press `Space`, `za`, or click the title to toggle it. Use `+` instead to make a callout foldable but open by default.
+
+> [!question]+ Can callouts be nested?
+> > [!success] Yes
+> > Add another `>` for each level.
+
 ### Horizontal Rules
 
 Use `---`, `***`, or `___` on their own line to draw a divider:

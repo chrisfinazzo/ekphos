@@ -1,4 +1,6 @@
 use super::*;
+use crate::core::markdown::{Callout, CalloutFold, CalloutKind};
+use ratatui::style::Color;
 
 /// Number of visual rows a code line occupies once wrapped. Built from the exact
 /// same spans and wrap routine as `render_code_line`, so the layout's row budget
@@ -26,6 +28,7 @@ pub(super) fn render_content_line<F>(
     wiki_link_validator: Option<F>,
     fold_state: Option<bool>, // None = not foldable, Some(true) = folded, Some(false) = expanded
     math_states: &[InlineMathRenderState],
+    callout: Option<CalloutKind>,
 ) -> Vec<InlineMathPlacement>
 where
     F: Fn(&str) -> bool,
@@ -42,7 +45,13 @@ where
         }
     };
     let content_theme = &theme.content;
-    let styled_line = if line.starts_with("###### ") {
+    let styled_line = if let Some(kind) = callout {
+        let selected = if is_cursor { Some(selected_link) } else { None };
+        let body = crate::core::markdown::quote_body(line).unwrap_or(line);
+        let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled("┃ ", Style::default().fg(callout_color(theme, kind)))];
+        spans.extend(callout_body_spans(body, theme, selected, wiki_link_validator, math_states));
+        Line::from(spans)
+    } else if line.starts_with("###### ") {
         Line::from(vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled(line.trim_start_matches("###### "), Style::default().fg(content_theme.text).add_modifier(Modifier::ITALIC))])
     } else if line.starts_with("##### ") {
         Line::from(vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled(line.trim_start_matches("##### "), Style::default().fg(content_theme.heading4).add_modifier(Modifier::BOLD))])
@@ -93,7 +102,10 @@ where
         styled_line
     };
     let wrapped_lines = wrap_line_for_cursor(final_line.spans, available_width, theme);
-    let (wrapped_lines, placements) = extract_inline_math_placements(wrapped_lines, math_states, area);
+    let (mut wrapped_lines, placements) = extract_inline_math_placements(wrapped_lines, math_states, area);
+    if let Some(kind) = callout {
+        continue_callout_bar(&mut wrapped_lines, callout_color(theme, kind));
+    }
     let bg_style = if is_cursor { Style::default().bg(theme.selection) } else { Style::default() };
     for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
         let line_area = Rect { x: area.x, y: area.y.saturating_add(i as u16), width: area.width, height: 1 };
@@ -134,6 +146,109 @@ pub(super) fn render_code_fence(f: &mut Frame, theme: &Theme, _lang: &str, area:
     let style = if is_cursor { Style::default().bg(theme.selection) } else { Style::default().bg(content_theme.code_background) };
     let paragraph = Paragraph::new(styled_line).style(style).wrap(Wrap { trim: false });
     f.render_widget(paragraph, area);
+}
+
+fn callout_color(theme: &Theme, kind: CalloutKind) -> Color {
+    match kind {
+        CalloutKind::Note | CalloutKind::Abstract | CalloutKind::Info | CalloutKind::Todo | CalloutKind::Tip => theme.info,
+        CalloutKind::Success => theme.success,
+        CalloutKind::Question | CalloutKind::Warning => theme.warning,
+        CalloutKind::Failure | CalloutKind::Danger | CalloutKind::Bug => theme.error,
+        CalloutKind::Example => theme.primary,
+        CalloutKind::Quote => theme.content.blockquote,
+    }
+}
+
+fn callout_title_spans(callout: &Callout<'_>, theme: &Theme) -> Vec<Span<'static>> {
+    let style = Style::default().fg(callout_color(theme, callout.kind)).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(format!("{} ", callout.kind.icon()), style)];
+    if callout.title.is_empty() {
+        spans.push(Span::styled(callout.display_title().into_owned(), style));
+    } else {
+        spans.extend(parse_inline_formatting::<fn(&str) -> bool>(callout.title, theme, None, None).into_iter().map(|span| {
+            let span_style = if span.style.fg.is_none() || span.style.fg == Some(theme.content.text) { span.style.patch(style) } else { span.style.add_modifier(Modifier::BOLD) };
+            Span::styled(span.content.into_owned(), span_style)
+        }));
+    }
+    spans
+}
+
+fn callout_body_spans<'a, F>(body: &'a str, theme: &Theme, selected: Option<usize>, wiki_link_validator: Option<F>, math_states: &[InlineMathRenderState]) -> Vec<Span<'a>>
+where
+    F: Fn(&str) -> bool,
+{
+    let content_theme = &theme.content;
+    if let Some(nested) = crate::core::markdown::callout(body) {
+        let mut spans = vec![Span::styled("┃ ", Style::default().fg(callout_color(theme, nested.kind)))];
+        spans.extend(callout_title_spans(&nested, theme));
+        return spans;
+    }
+    if let Some(quoted) = crate::core::markdown::quote_body(body) {
+        let mut spans = vec![Span::styled("┃ ", Style::default().fg(content_theme.blockquote))];
+        spans.extend(parse_inline_formatting_with_math(quoted, theme, selected, wiki_link_validator, math_states).into_iter().map(|span| {
+            let style = if span.style.fg.is_none() || span.style.fg == Some(content_theme.text) { span.style.fg(content_theme.blockquote).add_modifier(Modifier::ITALIC) } else { span.style };
+            Span::styled(span.content, style)
+        }));
+        return spans;
+    }
+    if let Some(heading) = crate::core::markdown::heading(body) {
+        let color = match heading.level {
+            1 => content_theme.heading1,
+            2 => content_theme.heading2,
+            3 => content_theme.heading3,
+            _ => content_theme.heading4,
+        };
+        return vec![Span::styled(heading.text, Style::default().fg(color).add_modifier(Modifier::BOLD))];
+    }
+    if let Some((indent, item)) = unordered_list_parts(body) {
+        let mut spans = vec![Span::raw(indent), Span::styled("• ", Style::default().fg(content_theme.list_marker))];
+        spans.extend(parse_inline_formatting_with_math(item, theme, selected, wiki_link_validator, math_states));
+        return spans;
+    }
+    parse_inline_formatting_with_math(body, theme, selected, wiki_link_validator, math_states)
+}
+
+fn continue_callout_bar(lines: &mut [Line<'_>], color: Color) {
+    for line in lines.iter_mut().skip(1) {
+        if line.spans.first().is_some_and(|indent| indent.content == "    ") {
+            line.spans.splice(0..1, [Span::raw("  "), Span::styled("┃ ", Style::default().fg(color))]);
+        }
+    }
+}
+
+fn callout_header_spans<'a>(callout: &Callout<'_>, theme: &Theme, cursor_indicator: &'a str, folded: Option<bool>) -> Vec<Span<'a>> {
+    let color = callout_color(theme, callout.kind);
+    let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled("┃ ", Style::default().fg(color))];
+    spans.extend(callout_title_spans(callout, theme));
+    if let Some(folded) = folded {
+        spans.push(Span::styled(if folded { " ▸" } else { " ▾" }, Style::default().fg(color)));
+    }
+    spans
+}
+
+pub(super) fn callout_header_height(line: &str, inner_width: u16, theme: &Theme) -> u16 {
+    crate::core::markdown::callout(line).map_or(1, |callout| {
+        let spans = callout_header_spans(&callout, theme, "  ", (callout.fold != CalloutFold::Fixed).then_some(false));
+        (wrap_line_for_cursor(spans, (inner_width as usize).saturating_sub(1), theme).len() as u16).max(1)
+    })
+}
+
+pub(super) fn render_callout_header(f: &mut Frame, line: &str, folded: bool, context: RenderContext<'_>) {
+    let RenderContext { theme, area, is_cursor, .. } = context;
+    let Some(callout) = crate::core::markdown::callout(line) else {
+        return;
+    };
+    let cursor_indicator = if is_cursor { "▶ " } else { "  " };
+    let spans = callout_header_spans(&callout, theme, cursor_indicator, (callout.fold != CalloutFold::Fixed).then_some(folded));
+    let mut wrapped_lines = wrap_line_for_cursor(spans, (area.width as usize).saturating_sub(1), theme);
+    continue_callout_bar(&mut wrapped_lines, callout_color(theme, callout.kind));
+    let bg_style = if is_cursor { Style::default().bg(theme.selection) } else { Style::default() };
+    for (i, wrapped_line) in wrapped_lines.into_iter().enumerate() {
+        let line_area = Rect { x: area.x, y: area.y.saturating_add(i as u16), width: area.width, height: 1 };
+        if line_area.y < area.y + area.height {
+            f.render_widget(Paragraph::new(wrapped_line).style(bg_style), line_area);
+        }
+    }
 }
 
 pub(super) struct TaskItemRenderState {

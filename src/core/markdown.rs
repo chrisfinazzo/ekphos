@@ -40,6 +40,115 @@ pub fn frontmatter_end_in_lines<'a>(lines: impl IntoIterator<Item = &'a str>) ->
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalloutKind {
+    Note,
+    Abstract,
+    Info,
+    Todo,
+    Tip,
+    Success,
+    Question,
+    Warning,
+    Failure,
+    Danger,
+    Bug,
+    Example,
+    Quote,
+}
+
+impl CalloutKind {
+    pub fn from_name(name: &str) -> Self {
+        match name.to_ascii_lowercase().as_str() {
+            "abstract" | "summary" | "tldr" => Self::Abstract,
+            "info" => Self::Info,
+            "todo" => Self::Todo,
+            "tip" | "hint" | "important" => Self::Tip,
+            "success" | "check" | "done" => Self::Success,
+            "question" | "help" | "faq" => Self::Question,
+            "warning" | "caution" | "attention" => Self::Warning,
+            "failure" | "fail" | "missing" => Self::Failure,
+            "danger" | "error" => Self::Danger,
+            "bug" => Self::Bug,
+            "example" => Self::Example,
+            "quote" | "cite" => Self::Quote,
+            _ => Self::Note,
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Note => "✎",
+            Self::Abstract => "≡",
+            Self::Info => "ℹ",
+            Self::Todo => "☐",
+            Self::Tip => "✦",
+            Self::Success => "✓",
+            Self::Question => "?",
+            Self::Warning => "⚠",
+            Self::Failure => "✗",
+            Self::Danger => "↯",
+            Self::Bug => "✱",
+            Self::Example => "☰",
+            Self::Quote => "❝",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalloutFold {
+    Fixed,
+    Expanded,
+    Collapsed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Callout<'a> {
+    pub kind: CalloutKind,
+    pub name: &'a str,
+    pub fold: CalloutFold,
+    pub title: &'a str,
+    pub marker_end: usize,
+}
+
+impl Callout<'_> {
+    pub fn display_title(&self) -> std::borrow::Cow<'_, str> {
+        if !self.title.is_empty() {
+            return self.title.into();
+        }
+        let mut characters = self.name.chars();
+        characters.next().map_or_else(String::new, |first| first.to_uppercase().chain(characters.flat_map(char::to_lowercase)).collect()).into()
+    }
+}
+
+pub fn callout(line: &str) -> Option<Callout<'_>> {
+    let body = line.strip_prefix('>')?.trim_start().strip_prefix("[!")?;
+    let name_len = body.find(']')?;
+    let name = &body[..name_len];
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut marker_end = line.len() - body.len() + name_len + 1;
+    let fold = match line.as_bytes().get(marker_end) {
+        Some(b'+') => CalloutFold::Expanded,
+        Some(b'-') => CalloutFold::Collapsed,
+        _ => CalloutFold::Fixed,
+    };
+    if fold != CalloutFold::Fixed {
+        marker_end += 1;
+    }
+    let rest = &line[marker_end..];
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(Callout { kind: CalloutKind::from_name(name), name, fold, title: rest.trim(), marker_end })
+}
+
+pub fn quote_body(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix('>')?;
+    Some(rest.strip_prefix([' ', '\t']).unwrap_or(rest))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FenceMarker {
     Backtick,
     Tilde,
@@ -703,6 +812,28 @@ mod tests {
         assert_eq!(markdown_link_at(source, image_start).unwrap().kind, MarkdownLinkKind::Image);
         assert!(markdown_link_at("[[wiki]]", 0).is_none());
         assert_eq!(markdown_link_at("[empty]()", 0).unwrap().destination, "");
+    }
+
+    #[test]
+    fn callouts_parse_type_fold_and_title_like_obsidian() {
+        let header = callout("> [!warning]- Mind the gap").unwrap();
+        assert_eq!((header.kind, header.fold, header.title, header.marker_end), (CalloutKind::Warning, CalloutFold::Collapsed, "Mind the gap", 13));
+        let header = callout(">[!FAQ]+").unwrap();
+        assert_eq!((header.kind, header.fold, header.display_title().as_ref()), (CalloutKind::Question, CalloutFold::Expanded, "Faq"));
+        assert_eq!(callout("> [!custom]").unwrap().kind, CalloutKind::Note);
+        assert_eq!(callout("> [!tldr]").unwrap().display_title(), "Tldr");
+        assert!(callout("> [!] empty").is_none());
+        assert!(callout("> [!note]title").is_none());
+        assert!(callout("[!note] not quoted").is_none());
+        assert!(callout("> plain quote").is_none());
+    }
+
+    #[test]
+    fn quote_body_strips_one_marker_and_its_space() {
+        assert_eq!(quote_body("> text"), Some("text"));
+        assert_eq!(quote_body(">"), Some(""));
+        assert_eq!(quote_body(">> nested"), Some("> nested"));
+        assert_eq!(quote_body("text"), None);
     }
 
     #[test]

@@ -456,6 +456,8 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 }
             } else if let Some(crate::app::ContentItem::Details { .. }) = app.document.content_items.get(app.document.content_cursor) {
                 app.toggle_current_details();
+            } else if app.is_callout_foldable_at(app.document.content_cursor) {
+                app.toggle_callout_fold_at(app.document.content_cursor);
             } else if app.is_heading_at(app.document.content_cursor) {
                 app.toggle_current_heading_fold();
             } else {
@@ -494,7 +496,13 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
         AppCommand::OpenTaskView => app.open_task_view(),
         AppCommand::ToggleZen => app.toggle_zen_mode(),
         AppCommand::ToggleFrontmatter => app.toggle_frontmatter_hidden(),
-        AppCommand::ToggleFold => app.toggle_current_heading_fold(),
+        AppCommand::ToggleFold => {
+            if app.is_callout_foldable_at(app.document.content_cursor) {
+                app.toggle_callout_fold_at(app.document.content_cursor);
+            } else {
+                app.toggle_current_heading_fold();
+            }
+        }
         AppCommand::FoldAll => app.fold_all_headings(),
         AppCommand::UnfoldAll => app.unfold_all_headings(),
         AppCommand::GoFirst => match app.state.focus {

@@ -293,7 +293,11 @@ fn highlight_markdown_line(row: usize, line: &str, colors: &HighlightColors, hig
     if !trimmed.is_empty() && trimmed.as_bytes()[0] == b'>' {
         let start = line.len() - trimmed.len();
         let char_start = line[..start].chars().count();
-        highlights.push(HighlightRange::new(row, char_start, char_start + 1, Style::default().fg(colors.blockquote_color), HighlightType::Blockquote));
+        let (char_end, style) = match crate::core::markdown::callout(trimmed) {
+            Some(callout) => (char_start + trimmed[..callout.marker_end].chars().count(), Style::default().fg(colors.blockquote_color).add_modifier(Modifier::BOLD)),
+            None => (char_start + 1, Style::default().fg(colors.blockquote_color)),
+        };
+        highlights.push(HighlightRange::new(row, char_start, char_end, style, HighlightType::Blockquote));
     }
     highlight_details_tags_fast(row, line, colors, highlights);
     highlight_list_marker_fast(row, line, trimmed, colors, highlights);
@@ -852,6 +856,15 @@ mod tests {
         assert!(bq.is_some(), "Should find blockquote highlight");
         assert_eq!(bq.unwrap().start_col, 0);
         assert_eq!(bq.unwrap().end_col, 1);
+    }
+
+    #[test]
+    fn callout_marker_highlights_through_the_fold_sign() {
+        let colors = HighlightColors::default();
+        let (highlights, _) = compute_all_highlights("> [!提示]- 标题", &colors);
+        let marker = highlights.iter().find(|h| h.highlight_type == HighlightType::Blockquote).unwrap();
+        assert_eq!((marker.start_col, marker.end_col), (0, 8));
+        assert!(marker.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]

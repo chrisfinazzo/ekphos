@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::markdown::CalloutFold;
 use unicode_width::UnicodeWidthStr;
 
 struct ParsedDocument {
@@ -65,7 +66,20 @@ fn push_text_line(parsed: &mut ParsedDocument, document: &DocumentSnapshot, sour
     if heading.is_some() {
         parsed.outline.push(OutlineItem { level: heading_level, source_line: source_line as u32, line: item_index });
     }
-    parsed.push_item(ContentItem::TextLine { range: document.line_range(source_line).unwrap_or_default(), source_line: source_line as u32, heading_level }, document, wiki_exists);
+    parsed.push_item(ContentItem::TextLine { range: document.line_range(source_line).unwrap_or_default(), source_line: source_line as u32, heading_level, callout: None }, document, wiki_exists);
+}
+fn push_callout(parsed: &mut ParsedDocument, document: &DocumentSnapshot, header_line: usize, callout: crate::core::markdown::Callout<'_>, wiki_exists: &dyn Fn(&str) -> bool) -> usize {
+    let header_index = parsed.items.len();
+    parsed.push_item(ContentItem::Callout { range: document.line_range(header_line).unwrap_or_default(), source_line: header_line as u32, body_lines: 0, kind: callout.kind, fold: callout.fold }, document, wiki_exists);
+    let mut line_index = header_line + 1;
+    while document.line(line_index).is_some_and(|line| line.starts_with('>') && crate::core::markdown::callout(line).is_none()) {
+        parsed.push_item(ContentItem::TextLine { range: document.line_range(line_index).unwrap_or_default(), source_line: line_index as u32, heading_level: 0, callout: Some(callout.kind) }, document, wiki_exists);
+        line_index += 1;
+    }
+    if let Some(ContentItem::Callout { body_lines, .. }) = parsed.items.get_mut(header_index) {
+        *body_lines = u32::try_from(line_index - header_line - 1).unwrap_or(u32::MAX);
+    }
+    line_index
 }
 fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFrontmatter>, content_start_line: usize, frontmatter_hidden: bool, show_tags: bool, wiki_exists: &dyn Fn(&str) -> bool) -> ParsedDocument {
     let mut parsed = ParsedDocument { items: Vec::with_capacity(document.line_count()), tables: Vec::new(), outline: Vec::new(), links: Vec::new(), link_ranges: Vec::with_capacity(document.line_count()) };
@@ -134,6 +148,10 @@ fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFront
         if let Some(task) = crate::tasks::parse_checkbox_line(line) {
             parsed.push_item(ContentItem::TaskItem { text: range_for_slice(document, line_index, task.body), checked: task.checked, source_line: line_index as u32, indent: task.indent, managed: task.managed }, document, wiki_exists);
             line_index += 1;
+            continue;
+        }
+        if let Some(callout) = crate::core::markdown::callout(line) {
+            line_index = push_callout(&mut parsed, document, line_index, callout, wiki_exists);
             continue;
         }
         let trimmed_line = line.trim();
@@ -272,6 +290,7 @@ impl App {
         self.state.mouse_hover_inline_image = None;
         self.document.details_open_states.clear();
         self.document.heading_fold_states.clear();
+        self.document.callout_fold_states.clear();
         if let Some(document) = self.document.active_document.as_ref() {
             let (frontmatter, content_start_line) = self.current_note().map(|note| (note.frontmatter.as_ref(), note.content_start_line)).unwrap_or((None, 0));
             let parsed = parse_document(document, frontmatter, content_start_line, self.document.frontmatter_hidden, self.state.config.show_tags, &|target| self.wiki_link_exists(target));
@@ -280,6 +299,7 @@ impl App {
             self.document.outline = parsed.outline;
             self.document.document_links = parsed.links;
             self.document.document_link_ranges = parsed.link_ranges;
+            self.document.callout_fold_states.extend(self.document.content_items.iter().enumerate().filter_map(|(index, item)| matches!(item, ContentItem::Callout { fold: CalloutFold::Collapsed, .. }).then_some((index, true))));
             self.document.document_parse_key = Some(parse_key);
             self.document.document_parse_count = self.document.document_parse_count.saturating_add(1);
         } else {
@@ -463,7 +483,28 @@ impl App {
         }
         (heading_idx + 1)..end_idx
     }
+    pub fn is_callout_foldable_at(&self, idx: usize) -> bool {
+        matches!(self.document.content_items.get(idx), Some(ContentItem::Callout { fold, .. }) if *fold != CalloutFold::Fixed)
+    }
+    pub fn is_callout_folded(&self, idx: usize) -> bool {
+        self.document.callout_fold_states.get(&idx).copied().unwrap_or(false)
+    }
+    pub fn toggle_callout_fold_at(&mut self, idx: usize) {
+        if self.is_callout_foldable_at(idx) {
+            let folded = !self.is_callout_folded(idx);
+            self.document.callout_fold_states.insert(idx, folded);
+        }
+    }
     pub fn is_content_item_visible(&self, idx: usize) -> bool {
+        for (callout_idx, is_folded) in &self.document.callout_fold_states {
+            if *is_folded && *callout_idx < idx {
+                if let Some(ContentItem::Callout { body_lines, .. }) = self.document.content_items.get(*callout_idx) {
+                    if idx <= *callout_idx + *body_lines as usize {
+                        return false;
+                    }
+                }
+            }
+        }
         for (heading_idx, is_folded) in &self.document.heading_fold_states {
             if *is_folded && *heading_idx < idx {
                 let children_range = self.get_heading_children_range(*heading_idx);
@@ -1116,6 +1157,7 @@ impl App {
 #[cfg(test)]
 mod phase6_tests {
     use super::*;
+    use crate::core::markdown::CalloutKind;
 
     #[test]
     fn shared_pass_emits_ranges_outline_links_and_one_table_metadata_owner() {
@@ -1144,6 +1186,26 @@ mod phase6_tests {
         assert_eq!(parsed.items.len(), parsed.link_ranges.len());
         assert!(std::mem::size_of::<ContentItem>() <= 40);
         assert!(std::mem::size_of::<DocumentLinkRange>() <= 8);
+    }
+
+    #[test]
+    fn callouts_own_their_quoted_body_lines() {
+        let source = "> [!note] Title\n> body [link](https://example.test)\n>\n> [!faq]- Folded\n> answer\nplain\n> quote\n";
+        let document = DocumentSnapshot::new(Arc::from(source));
+        let parsed = parse_document(&document, None, 0, true, true, &|_| false);
+        let shape: Vec<(&str, Option<CalloutKind>)> = parsed
+            .items
+            .iter()
+            .map(|item| match item {
+                ContentItem::Callout { kind, .. } => ("header", Some(*kind)),
+                ContentItem::TextLine { range, callout, .. } => (document.slice(*range), *callout),
+                _ => ("other", None),
+            })
+            .collect();
+        assert_eq!(shape, [("header", Some(CalloutKind::Note)), ("> body [link](https://example.test)", Some(CalloutKind::Note)), (">", Some(CalloutKind::Note)), ("header", Some(CalloutKind::Question)), ("> answer", Some(CalloutKind::Question)), ("plain", None), ("> quote", None),]);
+        assert!(matches!(parsed.items[0], ContentItem::Callout { body_lines: 2, fold: CalloutFold::Fixed, .. }));
+        assert!(matches!(parsed.items[3], ContentItem::Callout { body_lines: 1, fold: CalloutFold::Collapsed, .. }));
+        assert!(parsed.links.iter().any(|link| matches!(link, LinkInfo::Markdown { url, .. } if url == "https://example.test")));
     }
 
     #[test]

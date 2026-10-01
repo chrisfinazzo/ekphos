@@ -176,6 +176,8 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
                             app.open_path_or_url(path);
                         } else if app.item_is_details_at(idx) {
                             app.toggle_details_at(idx);
+                        } else if app.is_callout_foldable_at(idx) {
+                            app.toggle_callout_fold_at(idx);
                         } else if app.is_heading_at(idx) {
                             app.toggle_heading_fold_at(idx);
                         }

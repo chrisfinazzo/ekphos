@@ -66,6 +66,9 @@ Here are some ways to use wikilinks:
 - Make a **personal wiki** for anything you want to remember
 </details>
 
+> [!tip]- Callouts
+> Obsidian callouts work too. Press `Space` or `za` on the title to expand or collapse this one.
+
 ## Graph View
 
 Press `Ctrl+g` to see this note's Local graph. Use `Space` to focus another node, `]` to reveal another connection depth, or `v` to see the complete vault.

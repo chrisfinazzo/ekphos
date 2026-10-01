@@ -127,6 +127,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                     calc_wrapped_height(&prose, 6 + *indent as usize)
                 }
             }
+            ContentItem::Callout { range, .. } => callout_header_height(document.slice(*range), inner_area.width, theme).min(max_item_height),
             _ => 0,
         }));
         scratch.height_generation = app.document.document_generation;
@@ -144,6 +145,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                     item_text_heights[idx].saturating_add(inline_thumbnails_height(inline_image_count, inner_area.width, inline_image_height))
                 }
             }
+            ContentItem::Callout { .. } => item_text_heights[idx],
             ContentItem::MathBlock { .. } => math_blocks.get(idx).and_then(Option::as_ref).map_or(3, MathBlockRenderState::height),
             ContentItem::Image { .. } => standalone_image_height,
             ContentItem::CodeLine { range, .. } => code_line_height(document.slice(*range), code_block_highlights.get(&idx), inner_area.width, theme).min(max_item_height),
@@ -326,7 +328,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
         let is_cursor_line = item_idx == cursor && is_focused;
         let is_hovered = app.state.mouse_hover_item == Some(item_idx);
         match &app.document.content_items[item_idx] {
-            ContentItem::TextLine { range, .. } => {
+            ContentItem::TextLine { range, callout, .. } => {
                 let line = app.document_slice(*range);
                 let has_text_link = app.item_all_links_at(item_idx).iter().any(|link| !matches!(link, LinkInfo::Image { .. }));
                 let selected_is_image = is_cursor_line && matches!(app.current_selected_link(), Some(LinkInfo::Image { .. }));
@@ -336,12 +338,16 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                 let wiki_validator = |target: &str| app.wiki_link_exists(target);
                 let fold_state = if app.is_heading_at(item_idx) { Some(app.is_heading_folded(item_idx)) } else { None };
                 let context = RenderContext::new(&app.state.theme, chunks[chunk_idx], is_cursor_line, selected_link, has_link);
-                let placements = render_content_line(f, line, context, Some(wiki_validator), fold_state, &inline_math[item_idx]);
+                let placements = render_content_line(f, line, context, Some(wiki_validator), fold_state, &inline_math[item_idx], *callout);
                 render_inline_math(f, app, item_idx, &inline_math[item_idx], &placements, inner_area);
                 if !skip_images && app.inline_image_count_at(item_idx) > 0 {
                     let text_height = item_text_heights[item_idx];
                     render_inline_thumbnails(f, app, item_idx, chunks[chunk_idx], inner_area, (text_height, inline_image_height), is_cursor_line);
                 }
+            }
+            ContentItem::Callout { range, .. } => {
+                let context = RenderContext::new(&app.state.theme, chunks[chunk_idx], is_cursor_line, 0, false);
+                render_callout_header(f, app.document_slice(*range), app.is_callout_folded(item_idx), context);
             }
             ContentItem::MathBlock { range, marker, indent, .. } => {
                 let latex = app.document_slice(*range).trim().to_string();

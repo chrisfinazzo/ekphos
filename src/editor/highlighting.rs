@@ -406,7 +406,11 @@ impl Editor {
         if line.trim_start().starts_with('>') {
             let byte_start = line.find('>').unwrap_or(0);
             let start = line[..byte_start].chars().count();
-            self.highlight_index.insert(HighlightRange::new(row, start, start + 1, Style::default().fg(self.blockquote_color), HighlightType::Blockquote));
+            let (end, style) = match crate::core::markdown::callout(&line[byte_start..]) {
+                Some(callout) => (start + line[byte_start..byte_start + callout.marker_end].chars().count(), Style::default().fg(self.blockquote_color).add_modifier(Modifier::BOLD)),
+                None => (start + 1, Style::default().fg(self.blockquote_color)),
+            };
+            self.highlight_index.insert(HighlightRange::new(row, start, end, style, HighlightType::Blockquote));
         }
         self.highlight_list_marker(row, line);
         self.highlight_inline_code(row, line);

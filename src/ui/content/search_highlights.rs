@@ -41,6 +41,20 @@ pub(super) fn apply_content_search_highlights(f: &mut Frame, app: &App, visible_
                         let display_col = content_text.chars().take(content_start_col.saturating_sub(formatting_shrinkage)).map(|character| if character == '\t' { 4 } else { character.width().unwrap_or(0) }).sum::<usize>();
                         rendered_prefix_len + display_col
                     }
+                    Some(ContentItem::Callout { range, .. }) => {
+                        let line = document.slice(*range);
+                        let Some(callout) = crate::core::markdown::callout(line).filter(|callout| !callout.title.is_empty()) else {
+                            continue;
+                        };
+                        let title_start = line[..callout.title.as_ptr() as usize - line.as_ptr() as usize].chars().count();
+                        if m.start_col < title_start {
+                            continue;
+                        }
+                        let content_start_col = m.start_col - title_start;
+                        let formatting_shrinkage = calc_formatting_shrinkage(callout.title, content_start_col);
+                        let display_col: usize = callout.title.chars().take(content_start_col.saturating_sub(formatting_shrinkage)).map(|character| character.width().unwrap_or(0)).sum();
+                        4 + callout.kind.icon().width() + 1 + display_col
+                    }
                     Some(ContentItem::CodeLine { range, .. }) => {
                         let code = document.slice(*range);
                         let display_col: usize = code.chars().take(m.start_col).map(|character| if character == '\t' { 4 } else { character.width().unwrap_or(0) }).sum();

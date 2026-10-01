@@ -8,6 +8,7 @@ Notable Ekphos changes are summarized here. The in-app “What’s new” dialog
 
 - Aligned LaTeX rendering with Obsidian: display equations inside list items, `$$` delimiters that share a line with the equation, `$$...$$` inside prose, unnumbered `align`, `equation`, and `gather`, note-wide `\newcommand` macros, and common MathJax commands such as `\label`, `\eqref`, `\DeclareMathOperator`, `multline`, and `eqnarray`.
 - Rendered every equation at one consistent scale, so `\displaystyle` and other tall expressions appear larger than plain inline math and line up with the surrounding text.
+- Added Obsidian callouts. `> [!type] Title` blocks render with a colored bar, icon, and title for every built-in type and alias, and `+`/`-` callouts fold with `Space`, `za`, or a click.
 - Added pasting images from the clipboard. Screenshots and copied image files are saved to a configurable `attachments_dir` and linked into the note.
 - Fixed `cargo install ekphos` failing on Windows. Windows builds now use the system allocator instead of jemalloc.
 
