@@ -4,6 +4,8 @@ Notable Ekphos changes are summarized here. The in-app “What’s new” dialog
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-01
+
 ### Summary
 
 - Aligned LaTeX rendering with Obsidian: display equations inside list items, `$$` delimiters that share a line with the equation, `$$...$$` inside prose, unnumbered `align`, `equation`, and `gather`, note-wide `\newcommand` macros, and common MathJax commands such as `\label`, `\eqref`, `\DeclareMathOperator`, `multline`, and `eqnarray`.
@@ -55,7 +57,8 @@ Ekphos is now part of nostacks, a software lab founded by Ekphos’s creator. Ek
 
 - Improved terminal compatibility and packaging across supported platforms.
 
-[Unreleased]: https://github.com/nostacks/ekphos/compare/v0.50.20...HEAD
+[Unreleased]: https://github.com/nostacks/ekphos/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/nostacks/ekphos/releases/tag/v0.60.0
 [0.50.20]: https://github.com/nostacks/ekphos/releases/tag/v0.50.20
 [0.50.10]: https://github.com/nostacks/ekphos/releases/tag/v0.50.10
 [0.25.10]: https://github.com/nostacks/ekphos/releases/tag/v0.25.10
