@@ -120,6 +120,11 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) -
             handle_editor_mode_selector(app, key);
             return Ok(false);
         }
+        DialogState::DiagramViewer => {
+            app.state.keymap.reset_pending();
+            handle_diagram_viewer_key(app, key);
+            return Ok(false);
+        }
         DialogState::None => {}
     }
     if app.state.show_welcome {

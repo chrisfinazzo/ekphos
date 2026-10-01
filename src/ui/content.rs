@@ -16,6 +16,7 @@ use crate::config::Theme;
 use crate::ui::panel::{panel_surface, render_panel, PanelFrame, SurfaceKind};
 
 mod blocks;
+mod diagrams;
 mod images;
 mod inline;
 mod layout;
@@ -25,6 +26,8 @@ mod tables;
 mod wrapping;
 
 use blocks::*;
+use diagrams::*;
+pub(crate) use diagrams::{diagram_background, diagram_needs_backdrop, diagram_palette, opaque_rgb};
 use images::*;
 use inline::*;
 pub use layout::render_content;

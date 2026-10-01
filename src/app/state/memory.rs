@@ -145,6 +145,7 @@ fn content_item_bytes(item: &ContentItem) -> usize {
         | ContentItem::Callout { .. }
         | ContentItem::MathBlock { .. }
         | ContentItem::Image { .. }
+        | ContentItem::Diagram { .. }
         | ContentItem::CodeLine { .. }
         | ContentItem::CodeFence { .. }
         | ContentItem::TaskItem { .. }

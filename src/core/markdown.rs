@@ -166,6 +166,10 @@ pub fn fence_marker(line: &str) -> Option<FenceMarker> {
     }
 }
 
+pub fn is_mermaid_fence(line: &str) -> bool {
+    line.strip_prefix("```").is_some_and(|info| info.trim_start_matches('`').split(|character: char| character.is_whitespace() || character == '{').next().is_some_and(|language| language.eq_ignore_ascii_case("mermaid")))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineMath<'a> {
     /// Byte range including the opening and closing delimiters.

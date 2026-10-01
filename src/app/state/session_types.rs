@@ -98,6 +98,7 @@ pub enum DialogState {
     TaskView,
     ThemeSelector,
     EditorModeSelector,
+    DiagramViewer,
 }
 
 /// State for the theme selector modal (opened with Ctrl+T). Live-previews the
@@ -224,6 +225,147 @@ impl Default for GraphViewState {
     }
 }
 
+pub struct DiagramViewerState {
+    pub item_index: usize,
+    pub source: String,
+    pub kind: &'static str,
+    pub style: usize,
+    pub scene: Option<Arc<crate::diagram::DiagramScene>>,
+    pub scene_key: String,
+    pub zoom: f32,
+    pub center: (f32, f32),
+    pub needs_fit: bool,
+    pub canvas: Rect,
+    pub font_size: (u16, u16),
+    pub drag_origin: Option<(u16, u16)>,
+    pub last_click: Option<(std::time::Instant, u16, u16)>,
+    pub help_visible: bool,
+    pub frame: Option<(DiagramFrameKey, SlicedProtocol)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DiagramFrameKey {
+    pub canvas: (u16, u16),
+    pub font_size: (u16, u16),
+    pub zoom: f32,
+    pub center: (f32, f32),
+    pub fill: Option<[u8; 3]>,
+}
+
+impl DiagramViewerState {
+    pub const STYLES: usize = 3;
+    pub const MIN_ZOOM: f32 = 0.1;
+    pub const MAX_ZOOM: f32 = 12.0;
+    pub const MARGIN: f32 = 16.0;
+
+    pub fn new(item_index: usize, source: String) -> Self {
+        let kind = crate::diagram::diagram_kind(&source);
+        Self { item_index, source, kind, style: 0, scene: None, scene_key: String::new(), zoom: 1.0, center: (0.0, 0.0), needs_fit: true, canvas: Rect::default(), font_size: (0, 0), drag_origin: None, last_click: None, help_visible: false, frame: None }
+    }
+
+    pub fn natural_scale(&self) -> f32 {
+        f32::from(self.font_size.1.max(1)) / crate::diagram::SVG_UNITS_PER_ROW
+    }
+
+    pub fn canvas_pixels(&self) -> (f32, f32) {
+        (f32::from(self.canvas.width) * f32::from(self.font_size.0.max(1)), f32::from(self.canvas.height) * f32::from(self.font_size.1.max(1)))
+    }
+
+    pub fn scene_size(&self) -> Option<(f32, f32)> {
+        self.scene.as_ref().map(|scene| (scene.width(), scene.height()))
+    }
+
+    pub fn fit_zoom(&self) -> f32 {
+        let Some((width, height)) = self.scene_size() else {
+            return 1.0;
+        };
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        let scale = (pixel_width / (width + 2.0 * Self::MARGIN)).min(pixel_height / (height + 2.0 * Self::MARGIN));
+        (scale / self.natural_scale()).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM)
+    }
+
+    pub fn zoom_bounds(&self) -> (f32, f32) {
+        let fit = self.fit_zoom();
+        ((fit * 0.5).max(Self::MIN_ZOOM), Self::MAX_ZOOM.max(fit))
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.natural_scale() * self.zoom
+    }
+
+    pub fn fit(&mut self) {
+        self.zoom = self.fit_zoom();
+        if let Some((width, height)) = self.scene_size() {
+            self.center = (width / 2.0, height / 2.0);
+        }
+        self.needs_fit = false;
+    }
+
+    pub fn set_zoom(&mut self, zoom: f32, anchor: Option<(f32, f32)>) {
+        let (minimum, maximum) = self.zoom_bounds();
+        let zoom = zoom.clamp(minimum, maximum);
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        let (anchor_x, anchor_y) = anchor.unwrap_or((pixel_width / 2.0, pixel_height / 2.0));
+        let old_scale = self.scale();
+        let point = (self.center.0 + (anchor_x - pixel_width / 2.0) / old_scale, self.center.1 + (anchor_y - pixel_height / 2.0) / old_scale);
+        self.zoom = zoom;
+        let new_scale = self.scale();
+        self.center = (point.0 - (anchor_x - pixel_width / 2.0) / new_scale, point.1 - (anchor_y - pixel_height / 2.0) / new_scale);
+        self.clamp_center();
+    }
+
+    pub fn pan_pixels(&mut self, dx: f32, dy: f32) {
+        let scale = self.scale();
+        self.center = (self.center.0 + dx / scale, self.center.1 + dy / scale);
+        self.clamp_center();
+    }
+
+    pub fn pan_view_fraction(&mut self, fraction_x: f32, fraction_y: f32) {
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        self.pan_pixels(pixel_width * fraction_x, pixel_height * fraction_y);
+    }
+
+    pub fn clamp_center(&mut self) {
+        let Some((width, height)) = self.scene_size() else {
+            return;
+        };
+        let scale = self.scale();
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        let clamp_axis = |center: f32, extent: f32, view: f32| {
+            let half = view / scale / 2.0;
+            if extent + 2.0 * Self::MARGIN <= 2.0 * half {
+                extent / 2.0
+            } else {
+                center.clamp(half - Self::MARGIN, extent + Self::MARGIN - half)
+            }
+        };
+        self.center = (clamp_axis(self.center.0, width, pixel_width), clamp_axis(self.center.1, height, pixel_height));
+    }
+
+    pub fn visible_fraction(&self) -> Option<((f32, f32), (f32, f32))> {
+        let (width, height) = self.scene_size()?;
+        let scale = self.scale();
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        let axis = |center: f32, extent: f32, view: f32| {
+            let total = extent + 2.0 * Self::MARGIN;
+            let start = ((center - view / scale / 2.0 + Self::MARGIN) / total).clamp(0.0, 1.0);
+            let end = ((center + view / scale / 2.0 + Self::MARGIN) / total).clamp(0.0, 1.0);
+            (start, end)
+        };
+        Some((axis(self.center.0, width, pixel_width), axis(self.center.1, height, pixel_height)))
+    }
+
+    pub fn frame_key(&self, fill: Option<[u8; 3]>) -> DiagramFrameKey {
+        DiagramFrameKey { canvas: (self.canvas.width, self.canvas.height), font_size: self.font_size, zoom: self.zoom, center: self.center, fill }
+    }
+
+    pub fn view(&self) -> crate::diagram::DiagramView {
+        let scale = self.scale();
+        let (pixel_width, pixel_height) = self.canvas_pixels();
+        crate::diagram::DiagramView { pixel_width: pixel_width as u32, pixel_height: pixel_height as u32, scale, origin_x: self.center.0 - pixel_width / scale / 2.0, origin_y: self.center.1 - pixel_height / scale / 2.0 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
     Sidebar,
@@ -280,6 +422,7 @@ pub enum ContentItem {
     Callout { range: DocumentRange, source_line: u32, body_lines: u32, kind: CalloutKind, fold: CalloutFold },
     MathBlock { range: DocumentRange, source_line: u32, end_line: u32, marker: DocumentRange, indent: u16 },
     Image { path: DocumentRange, source_line: u32 },
+    Diagram { range: DocumentRange, source_line: u32, end_line: u32 },
     CodeLine { range: DocumentRange, source_line: u32 },
     CodeFence { language: DocumentRange, source_line: u32 },
     TaskItem { text: DocumentRange, checked: bool, source_line: u32, indent: u16, managed: bool },
@@ -297,6 +440,7 @@ impl ContentItem {
             | Self::Callout { source_line, .. }
             | Self::MathBlock { source_line, .. }
             | Self::Image { source_line, .. }
+            | Self::Diagram { source_line, .. }
             | Self::CodeLine { source_line, .. }
             | Self::CodeFence { source_line, .. }
             | Self::TaskItem { source_line, .. }

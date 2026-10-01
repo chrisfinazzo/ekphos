@@ -2,6 +2,7 @@ mod base_view;
 mod canvas_view;
 mod content;
 mod context_menu;
+mod diagram_viewer;
 mod dialogs;
 mod editor;
 mod file_picker;
@@ -130,6 +131,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             }
         }
         DialogState::EditorModeSelector => render_editor_mode_selector(f, app),
+        DialogState::DiagramViewer => diagram_viewer::render_diagram_viewer(f, app),
         DialogState::None => {
             if app.state.show_welcome {
                 render_welcome_dialog(f, &app.state.theme);
@@ -656,6 +658,107 @@ mod tests {
         fixture.app.images.picker = None;
         terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
         assert!(fixture.app.images.image_states.is_empty());
+    }
+
+    fn settle_images(fixture: &mut GoldenApp, terminal: &mut Terminal<TestBackend>) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+            if !fixture.app.image_has_background_work() || Instant::now() > deadline {
+                break;
+            }
+            while fixture.app.image_has_background_work() && Instant::now() < deadline {
+                fixture.app.poll_pending_images();
+                std::thread::yield_now();
+            }
+        }
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+    }
+
+    fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).map(|y| row_text(buffer, y)).collect::<Vec<_>>().join("\n")
+    }
+
+    const DIAGRAM_NOTE: &str = "# Diagrams\n\n```mermaid\nflowchart LR\n  A[Write] --> B[Render]\n```\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n\n```mermaid\nnot a diagram\n```\n";
+
+    #[test]
+    fn mermaid_blocks_render_inline_and_keep_readable_fallbacks() {
+        let mut fixture = GoldenApp::with_content(DIAGRAM_NOTE);
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+        let fallback = screen_text(&terminal);
+        assert!(fallback.contains("◇ Flowchart"), "{fallback}");
+        assert!(fallback.contains("A[Write] --> B[Render]"), "{fallback}");
+        assert!(!fallback.contains("```"), "{fallback}");
+
+        fixture.app.images.picker = Some(Picker::halfblocks());
+        settle_images(&mut fixture, &mut terminal);
+        let rendered = screen_text(&terminal);
+        assert_eq!(fixture.app.images.image_states.keys().filter(|key| key.starts_with("diagram:block:")).count(), 2);
+        assert!(rendered.contains("◇ Sequence diagram"), "{rendered}");
+        assert!(rendered.contains("Couldn't render this diagram"), "{rendered}");
+        assert!(rendered.contains("not a diagram"), "{rendered}");
+        assert!(!rendered.contains("A[Write] --> B[Render]"), "{rendered}");
+
+        fixture.app.state.focus = crate::app::Focus::Content;
+        fixture.app.document.content_cursor = fixture.app.document.content_items.iter().position(|item| matches!(item, crate::app::ContentItem::Diagram { .. })).unwrap();
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+        assert!(screen_text(&terminal).contains("Enter to explore"));
+
+        fixture.app.images.picker = None;
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+        assert!(fixture.app.images.image_states.is_empty());
+    }
+
+    #[test]
+    fn diagram_viewer_renders_frames_that_follow_zoom_and_closes_cleanly() {
+        let mut fixture = GoldenApp::with_content(DIAGRAM_NOTE);
+        fixture.app.images.picker = Some(Picker::halfblocks());
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        settle_images(&mut fixture, &mut terminal);
+        let first = fixture.app.diagram_item_indices()[0];
+        assert!(fixture.app.open_diagram_viewer(first));
+        assert_eq!(fixture.app.state.dialog, DialogState::DiagramViewer);
+        settle_images(&mut fixture, &mut terminal);
+        let screen = screen_text(&terminal);
+        assert!(screen.contains("DIAGRAM"), "{screen}");
+        assert!(screen.contains("Flowchart"), "{screen}");
+        assert!(screen.contains("1 of 3"), "{screen}");
+        assert!(screen.contains("Note theme"), "{screen}");
+        let viewer = fixture.app.state.diagram_viewer.as_deref().unwrap();
+        assert!(viewer.frame.is_some());
+        assert!(!viewer.needs_fit);
+        let fitted = viewer.frame.as_ref().unwrap().0;
+
+        let viewer = fixture.app.state.diagram_viewer.as_deref_mut().unwrap();
+        viewer.set_zoom(viewer.zoom * 3.0, None);
+        viewer.pan_view_fraction(0.5, 0.0);
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+        let zoomed = fixture.app.state.diagram_viewer.as_deref().unwrap().frame.as_ref().unwrap().0;
+        assert!(zoomed.zoom > fitted.zoom);
+        assert_ne!(zoomed.center, fitted.center);
+        assert!(screen_text(&terminal).contains('━'), "zoomed views show a horizontal scrollbar");
+
+        fixture.app.state.diagram_viewer.as_deref_mut().unwrap().style = 1;
+        settle_images(&mut fixture, &mut terminal);
+        assert!(screen_text(&terminal).contains("Light"));
+        assert!(fixture.app.state.diagram_viewer.as_deref().unwrap().frame.is_some());
+
+        fixture.app.step_diagram_viewer(1);
+        settle_images(&mut fixture, &mut terminal);
+        let screen = screen_text(&terminal);
+        assert!(screen.contains("Sequence diagram") && screen.contains("2 of 3"), "{screen}");
+        assert_eq!(fixture.app.state.diagram_viewer.as_deref().unwrap().style, 1);
+
+        fixture.app.step_diagram_viewer(1);
+        settle_images(&mut fixture, &mut terminal);
+        assert!(screen_text(&terminal).contains("Couldn't render this diagram"));
+
+        fixture.app.close_diagram_viewer();
+        assert_eq!(fixture.app.state.dialog, DialogState::None);
+        assert!(fixture.app.state.diagram_viewer.is_none());
+        terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
     }
 
     #[test]

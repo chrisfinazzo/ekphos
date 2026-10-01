@@ -37,6 +37,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     let standalone_image_height = app.state.config.effective_image_height();
     let inline_image_height = app.state.config.effective_inline_image_height();
     let (math_blocks, inline_math) = prepare_math(app, Size::new(inner_area.width, inner_area.height), !skip_images);
+    let diagram_blocks = prepare_diagrams(app, Size::new(inner_area.width, inner_area.height), !skip_images);
     let document = app.document.active_document.as_ref().expect("normal-mode content requires a document snapshot");
     let document_tables = &app.document.document_tables;
     let document_link_ranges = &app.document.document_link_ranges;
@@ -148,6 +149,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
             ContentItem::Callout { .. } => item_text_heights[idx],
             ContentItem::MathBlock { .. } => math_blocks.get(idx).and_then(Option::as_ref).map_or(3, MathBlockRenderState::height),
             ContentItem::Image { .. } => standalone_image_height,
+            ContentItem::Diagram { range, .. } => diagram_block_height(diagram_blocks.get(idx).and_then(Option::as_ref), document.slice(*range), diagram_card_width(inner_area.width)).min(max_item_height),
             ContentItem::CodeLine { range, .. } => code_line_height(document.slice(*range), code_block_highlights.get(&idx), inner_area.width, theme).min(max_item_height),
             ContentItem::CodeFence { .. } => 1u16,
             ContentItem::TaskItem { .. } => {
@@ -359,6 +361,11 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                 if !skip_images {
                     render_inline_image_with_cursor(f, app, item_idx, *path, chunks[chunk_idx], inner_area, (is_cursor_line, is_hovered));
                 }
+            }
+            ContentItem::Diagram { range, .. } => {
+                let source = app.document_slice(*range).to_string();
+                let state = diagram_blocks.get(item_idx).and_then(Option::as_ref).cloned().unwrap_or(DiagramBlockState::Pending);
+                render_diagram_block(f, app, DiagramBlockView { item_index: item_idx, source: &source, state: &state, viewport: inner_area, is_cursor: is_cursor_line, is_hovered }, chunks[chunk_idx]);
             }
             ContentItem::CodeLine { range, .. } => {
                 let highlighted_spans = code_block_highlights.get(&item_idx).cloned();

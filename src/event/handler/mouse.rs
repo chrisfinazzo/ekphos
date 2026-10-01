@@ -84,6 +84,10 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
         handle_graph_view_mouse(app, mouse);
         return;
     }
+    if app.state.dialog == DialogState::DiagramViewer {
+        handle_diagram_viewer_mouse(app, mouse);
+        return;
+    }
     if app.state.dialog == DialogState::TaskView {
         handle_task_view_mouse(app, mouse);
         return;
@@ -113,7 +117,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
                     app.state.mouse_hover_inline_image = hovered_inline_image.map(|image| (image.item_index, image.selection_index));
                     let hovered_item = app.state.content_item_rects.iter().find(|(_, rect)| mouse_y >= rect.y && mouse_y < rect.y + rect.height).map(|(idx, _)| *idx);
                     if let Some(idx) = hovered_item {
-                        if app.state.mouse_hover_inline_image.is_some() || app.item_has_link_at(idx) || app.item_is_image_at(idx).is_some() {
+                        if app.state.mouse_hover_inline_image.is_some() || app.item_has_link_at(idx) || app.item_is_image_at(idx).is_some() || app.item_is_diagram_at(idx) {
                             app.state.mouse_hover_item = Some(idx);
                         } else {
                             app.state.mouse_hover_item = None;
@@ -172,6 +176,8 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
                                 app.editor.pending_wiki_target = Some(wiki_link.target);
                                 app.state.dialog = DialogState::CreateWikiNote;
                             }
+                        } else if app.item_is_diagram_at(idx) {
+                            app.open_diagram_viewer(idx);
                         } else if let Some(path) = app.item_is_image_at(idx) {
                             app.open_path_or_url(path);
                         } else if app.item_is_details_at(idx) {

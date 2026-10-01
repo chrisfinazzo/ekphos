@@ -71,6 +71,14 @@ Here are some ways to use wikilinks:
 
 ## Graph View
 
+```mermaid
+flowchart LR
+    Demo[Demo Note] --> Start[Getting Started]
+    Start --> Demo
+```
+
+Mermaid diagrams like the one above render inline. Press `Enter` on one to zoom and pan.
+
 Press `Ctrl+g` to see this note's Local graph. Use `Space` to focus another node, `]` to reveal another connection depth, or `v` to see the complete vault.
 
 Happy linking!

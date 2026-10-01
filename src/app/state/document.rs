@@ -103,6 +103,16 @@ fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFront
     let mut in_code_block = false;
     while line_index < document.line_count() {
         let line = document.line(line_index).unwrap_or("");
+        if !in_code_block && crate::core::markdown::is_mermaid_fence(line) {
+            if let Some(closing_line) = ((line_index + 1)..document.line_count()).find(|candidate| document.line(*candidate).is_some_and(|source| source.starts_with("```"))) {
+                let body = document.line_range(line_index + 1).zip(document.line_range(closing_line.saturating_sub(1))).map(|(first, last)| DocumentRange::new(first.start(), last.end().max(first.start()))).filter(|_| closing_line > line_index + 1);
+                if let Some(range) = body.filter(|range| !document.slice(*range).trim().is_empty()) {
+                    parsed.push_item(ContentItem::Diagram { range, source_line: line_index as u32, end_line: closing_line as u32 }, document, wiki_exists);
+                    line_index = closing_line + 1;
+                    continue;
+                }
+            }
+        }
         if line.starts_with("```") {
             let language = line.trim_start_matches('`');
             parsed.push_item(ContentItem::CodeFence { language: range_for_slice(document, line_index, language), source_line: line_index as u32 }, document, wiki_exists);
@@ -1240,6 +1250,25 @@ mod phase6_tests {
             .collect();
         assert_eq!(blocks, [("\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}", 1, 4), ("e^{i\\pi}+1=0", 5, 5), ("\\sum_{i=1}^n i", 6, 8), ("x^2 + y^2 = z^2", 9, 9)]);
         assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::CodeLine { range, .. } if document.slice(*range) == "$$not math$$")));
+    }
+
+    #[test]
+    fn closed_mermaid_fences_become_single_diagram_items() {
+        let source = "Intro\n```mermaid\ngraph TD\n  A --> B\n```\nBetween\n```Mermaid {theme: dark}\nsequenceDiagram\n```\n```mermaid\n```\n```mermaid\nunclosed\n";
+        let document = DocumentSnapshot::new(Arc::from(source));
+        let parsed = parse_document(&document, None, 0, true, true, &|_| false);
+        let diagrams: Vec<(&str, u32, u32)> = parsed
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ContentItem::Diagram { range, source_line, end_line } => Some((document.slice(*range), *source_line, *end_line)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(diagrams, [("graph TD\n  A --> B", 1, 4), ("sequenceDiagram", 6, 8)]);
+        assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::TextLine { range, .. } if document.slice(*range) == "Between")));
+        assert_eq!(parsed.items.iter().filter(|item| matches!(item, ContentItem::CodeFence { .. })).count(), 3);
+        assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::CodeLine { range, .. } if document.slice(*range) == "unclosed")));
     }
 
     #[test]

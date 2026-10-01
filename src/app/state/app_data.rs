@@ -1020,6 +1020,7 @@ pub struct UiState {
     pub changelog_links: Vec<(Rect, String)>,
     pub theme_picker: Option<ThemePicker>,
     pub editor_mode_selected: EditingMode,
+    pub diagram_viewer: Option<Box<DiagramViewerState>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

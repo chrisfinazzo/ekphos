@@ -4,6 +4,7 @@ pub mod canvas;
 pub mod clipboard;
 pub mod config;
 pub mod core;
+pub(crate) mod diagram;
 pub mod editor;
 pub mod event;
 mod frontmatter_templates;

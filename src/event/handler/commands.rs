@@ -392,7 +392,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                     } else {
                         app.canvas_activate_selected_node();
                     }
-                } else if !open_selected_content_target(app) {
+                } else if !app.open_current_diagram() && !open_selected_content_target(app) {
                     app.open_current_image();
                 }
             }
@@ -412,7 +412,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                     app.open_selected_base_row();
                 } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.open_selected_canvas_node();
-                } else if !open_selected_content_target(app) {
+                } else if !app.open_current_diagram() && !open_selected_content_target(app) {
                     app.open_current_image();
                 }
             } else if app.state.focus == Focus::Outline {
@@ -456,6 +456,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 }
             } else if let Some(crate::app::ContentItem::Details { .. }) = app.document.content_items.get(app.document.content_cursor) {
                 app.toggle_current_details();
+            } else if app.open_current_diagram() {
             } else if app.is_callout_foldable_at(app.document.content_cursor) {
                 app.toggle_callout_fold_at(app.document.content_cursor);
             } else if app.is_heading_at(app.document.content_cursor) {

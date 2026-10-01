@@ -7,6 +7,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::diagram::{DiagramScene, DiagramStyle};
+
 pub const DEFAULT_IMAGE_MEMORY_BUDGET: usize = 16 * 1024 * 1024;
 pub const MAX_IMAGE_DOWNLOAD_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_IMAGE_DIMENSION: u32 = 8_192;
@@ -72,6 +74,7 @@ enum ImageSource {
     Local(PathBuf),
     Remote(String),
     Math { latex: String, color: [u8; 3], style: MathRenderStyle },
+    Diagram { source: String, style: DiagramStyle },
 }
 
 struct ImageRequest {
@@ -86,14 +89,24 @@ enum WorkerMessage {
     Shutdown,
 }
 
+enum Loaded {
+    Raster(DynamicImage, Option<MathMetrics>),
+    Diagram(Arc<DiagramScene>),
+}
+
 struct ImageResult {
     key: String,
     generation: u64,
-    result: Result<(DynamicImage, Option<MathMetrics>), String>,
+    result: Result<Loaded, String>,
 }
 
 struct DecodedEntry {
     image: Arc<DynamicImage>,
+    bytes: usize,
+}
+
+struct DiagramEntry {
+    scene: Arc<DiagramScene>,
     bytes: usize,
 }
 
@@ -111,6 +124,8 @@ pub struct ImageService {
     pending: HashMap<String, u64>,
     failures: HashMap<String, String>,
     decoded: HashMap<String, DecodedEntry>,
+    diagrams: HashMap<String, DiagramEntry>,
+    diagram_sizes: HashMap<String, (f32, f32)>,
     math_metrics: HashMap<String, MathMetrics>,
     sources: HashMap<String, ImageSource>,
     lru: VecDeque<String>,
@@ -143,6 +158,8 @@ impl ImageService {
             pending: HashMap::new(),
             failures: HashMap::new(),
             decoded: HashMap::new(),
+            diagrams: HashMap::new(),
+            diagram_sizes: HashMap::new(),
             math_metrics: HashMap::new(),
             sources: HashMap::new(),
             lru: VecDeque::new(),
@@ -156,6 +173,8 @@ impl ImageService {
         self.pending.clear();
         self.failures.clear();
         self.decoded.clear();
+        self.diagrams.clear();
+        self.diagram_sizes.clear();
         self.math_metrics.clear();
         self.sources.clear();
         self.lru.clear();
@@ -174,8 +193,12 @@ impl ImageService {
     pub fn request_math(&mut self, key: &str, latex: String, color: [u8; 3], style: MathRenderStyle) -> bool {
         self.request(key, ImageSource::Math { latex, color, style })
     }
+
+    pub fn request_diagram(&mut self, key: &str, source: String, style: DiagramStyle) -> bool {
+        self.request(key, ImageSource::Diagram { source, style })
+    }
     fn request(&mut self, key: &str, source: ImageSource) -> bool {
-        if self.decoded.contains_key(key) || self.pending.contains_key(key) || self.failures.contains_key(key) || self.pending.len() >= MAX_PENDING_IMAGE_REQUESTS {
+        if self.decoded.contains_key(key) || self.diagrams.contains_key(key) || self.pending.contains_key(key) || self.failures.contains_key(key) || self.pending.len() >= MAX_PENDING_IMAGE_REQUESTS {
             return false;
         }
         let generation = self.generation.load(Ordering::Acquire);
@@ -213,12 +236,13 @@ impl ImageService {
             }
             self.pending.remove(&result.key);
             match result.result {
-                Ok((image, metrics)) => {
+                Ok(Loaded::Raster(image, metrics)) => {
                     if let Some(metrics) = metrics {
                         self.math_metrics.insert(result.key.clone(), metrics);
                     }
                     self.insert_decoded(result.key, image);
                 }
+                Ok(Loaded::Diagram(scene)) => self.insert_diagram(result.key, scene),
                 Err(error) => {
                     self.failures.insert(result.key, error);
                 }
@@ -232,6 +256,20 @@ impl ImageService {
         let image = Arc::clone(&self.decoded.get(key)?.image);
         self.touch(key);
         Some(image)
+    }
+
+    pub fn diagram(&mut self, key: &str) -> Option<Arc<DiagramScene>> {
+        let scene = Arc::clone(&self.diagrams.get(key)?.scene);
+        self.touch(key);
+        Some(scene)
+    }
+
+    pub fn diagram_dimensions(&self, key: &str) -> Option<(f32, f32)> {
+        self.diagram_sizes.get(key).copied()
+    }
+
+    pub fn failure(&self, key: &str) -> Option<&str> {
+        self.failures.get(key).map(String::as_str)
     }
 
     pub fn math_metrics(&self, key: &str) -> Option<MathMetrics> {
@@ -279,18 +317,11 @@ impl ImageService {
     }
 
     pub fn trim_to_budget(&mut self, budget: usize) {
-        while self.decoded_bytes > budget && self.decoded.len() > 1 {
-            let Some(oldest) = self.lru.pop_front() else {
-                break;
-            };
-            if let Some(entry) = self.decoded.remove(&oldest) {
-                self.decoded_bytes = self.decoded_bytes.saturating_sub(entry.bytes);
-            }
-        }
+        self.evict_until(budget);
     }
 
     pub fn stats(&self) -> ImageServiceStats {
-        ImageServiceStats { decoded_bytes: self.decoded_bytes, decoded_entries: self.decoded.len(), pending_requests: self.pending.len(), failed_requests: self.failures.len(), live_workers: self.workers.iter().filter(|worker| !worker.is_finished()).count() }
+        ImageServiceStats { decoded_bytes: self.decoded_bytes, decoded_entries: self.decoded.len() + self.diagrams.len(), pending_requests: self.pending.len(), failed_requests: self.failures.len(), live_workers: self.workers.iter().filter(|worker| !worker.is_finished()).count() }
     }
     fn cache_path(&self, key: &str) -> PathBuf {
         self.cache_dir.join(cache_key_to_filename(key))
@@ -330,13 +361,27 @@ impl ImageService {
         self.decoded_bytes = self.decoded_bytes.saturating_add(bytes);
         self.lru.push_back(key.clone());
         self.decoded.insert(key, DecodedEntry { image: Arc::new(image), bytes });
-        while self.decoded_bytes > self.budget && self.decoded.len() > 1 {
+        self.evict_until(self.budget);
+    }
+    fn insert_diagram(&mut self, key: String, scene: Arc<DiagramScene>) {
+        if let Some(previous) = self.diagrams.remove(&key) {
+            self.decoded_bytes = self.decoded_bytes.saturating_sub(previous.bytes);
+            self.lru.retain(|candidate| candidate != &key);
+        }
+        let bytes = scene.estimated_bytes();
+        self.diagram_sizes.insert(key.clone(), (scene.width(), scene.height()));
+        self.decoded_bytes = self.decoded_bytes.saturating_add(bytes);
+        self.lru.push_back(key.clone());
+        self.diagrams.insert(key, DiagramEntry { scene, bytes });
+        self.evict_until(self.budget);
+    }
+    fn evict_until(&mut self, budget: usize) {
+        while self.decoded_bytes > budget && self.decoded.len() + self.diagrams.len() > 1 {
             let Some(oldest) = self.lru.pop_front() else {
                 break;
             };
-            if let Some(entry) = self.decoded.remove(&oldest) {
-                self.decoded_bytes = self.decoded_bytes.saturating_sub(entry.bytes);
-            }
+            let bytes = self.decoded.remove(&oldest).map(|entry| entry.bytes).or_else(|| self.diagrams.remove(&oldest).map(|entry| entry.bytes)).unwrap_or(0);
+            self.decoded_bytes = self.decoded_bytes.saturating_sub(bytes);
         }
     }
     fn touch(&mut self, key: &str) {
@@ -387,13 +432,14 @@ fn image_worker_loop(receiver: Arc<Mutex<Receiver<WorkerMessage>>>, sender: Sync
         }
     }
 }
-fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Result<(DynamicImage, Option<MathMetrics>), String> {
+fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Result<Loaded, String> {
     let (image, preserve_resolution, metrics) = match &request.source {
+        ImageSource::Diagram { source, style } => return DiagramScene::render(source, style).map(|scene| Loaded::Diagram(Arc::new(scene))),
         ImageSource::Local(path) => (decode_path(path)?, false, None),
         ImageSource::Remote(url) => {
             if request.cache_path.is_file() {
                 match decode_path(&request.cache_path) {
-                    Ok(image) => return Ok((image, None)),
+                    Ok(image) => return Ok(Loaded::Raster(image, None)),
                     Err(_) => {
                         let _ = std::fs::remove_file(&request.cache_path);
                     }
@@ -410,7 +456,7 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
             let metrics = MathMetrics { width: display_list.width as f32, height: display_list.height as f32, depth: display_list.depth as f32 };
             if request.cache_path.is_file() {
                 match decode_path(&request.cache_path) {
-                    Ok(image) => return Ok((image, Some(metrics))),
+                    Ok(image) => return Ok(Loaded::Raster(image, Some(metrics))),
                     Err(_) => {
                         let _ = std::fs::remove_file(&request.cache_path);
                     }
@@ -423,7 +469,7 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
         }
     };
     validate_image(&image)?;
-    Ok((if preserve_resolution { image } else { resize_for_cache(image) }, metrics))
+    Ok(Loaded::Raster(if preserve_resolution { image } else { resize_for_cache(image) }, metrics))
 }
 
 fn layout_math(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Result<ratex_types::display_item::DisplayList, String> {

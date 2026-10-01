@@ -14,6 +14,7 @@ use crate::vim::command::{parse_command, Command};
 use crate::vim::{FindState, PendingFind, PendingMacro, PendingMark, TextObject, TextObjectScope, VimInputMode, VimMode};
 
 mod commands;
+mod diagram;
 mod dialogs;
 mod edit;
 mod event_loop;
@@ -26,6 +27,7 @@ mod vim_modes;
 mod vim_normal;
 
 use commands::*;
+use diagram::*;
 use dialogs::*;
 use edit::*;
 pub use event_loop::run_app;

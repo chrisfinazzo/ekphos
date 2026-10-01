@@ -61,7 +61,7 @@ fn indexed_color_rgb(index: u8) -> [u8; 3] {
     }
 }
 
-fn terminal_color_rgb(color: ratatui::style::Color, fallback: ratatui::style::Color) -> [u8; 3] {
+pub(super) fn terminal_color_rgb(color: ratatui::style::Color, fallback: ratatui::style::Color) -> [u8; 3] {
     use ratatui::style::Color;
     match color {
         Color::Reset => terminal_color_rgb(fallback, Color::Gray),

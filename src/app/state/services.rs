@@ -149,6 +149,18 @@ impl App {
     pub fn request_math_image(&mut self, key: &str, latex: String, color: [u8; 3], style: crate::image_service::MathRenderStyle) {
         self.images.worker.request_math(key, latex, color, style);
     }
+    pub fn request_diagram(&mut self, key: &str, source: String, style: crate::diagram::DiagramStyle) {
+        self.images.worker.request_diagram(key, source, style);
+    }
+    pub fn diagram_dimensions(&self, key: &str) -> Option<(f32, f32)> {
+        self.images.worker.diagram_dimensions(key)
+    }
+    pub fn diagram_scene(&mut self, key: &str) -> Option<Arc<crate::diagram::DiagramScene>> {
+        self.images.worker.diagram(key)
+    }
+    pub fn image_failure(&self, key: &str) -> Option<&str> {
+        self.images.worker.failure(key)
+    }
     pub fn decoded_image(&mut self, key: &str) -> Option<Arc<DynamicImage>> {
         self.images.worker.decoded(key)
     }
@@ -208,7 +220,8 @@ impl App {
         let decoded_budget = crate::image_service::DEFAULT_IMAGE_MEMORY_BUDGET.saturating_sub(self.images.protocol_bytes);
         self.images.worker.trim_to_budget(decoded_budget);
         while (self.images.protocol_bytes + self.images.worker.decoded_bytes() > crate::image_service::DEFAULT_IMAGE_MEMORY_BUDGET || self.images.image_states.len() > MAX_PROTOCOL_PLACEMENTS) && self.images.image_states.len() > 1 {
-            let Some(oldest_key) = self.images.image_states.iter().min_by_key(|(_, state)| state.last_visible_epoch).map(|(key, _)| key.clone()) else {
+            let epoch = self.images.render_epoch;
+            let Some(oldest_key) = self.images.image_states.iter().filter(|(_, state)| state.last_visible_epoch != epoch).min_by_key(|(_, state)| state.last_visible_epoch).map(|(key, _)| key.clone()) else {
                 break;
             };
             self.remove_image_state(&oldest_key);

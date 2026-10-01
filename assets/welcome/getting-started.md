@@ -215,6 +215,33 @@ fn main() {
 }
 ```
 
+### Mermaid Diagrams
+
+A fenced block tagged `mermaid` renders as a diagram in the note's theme colors:
+
+```mermaid
+flowchart LR
+    Idea[Idea] --> Note[Write a note]
+    Note --> Link{Link it?}
+    Link -->|Yes| Graph[(Graph view)]
+    Link -->|Not yet| Inbox[Inbox]
+```
+
+Press `Enter`, `Space`, or click a diagram to explore it full screen:
+
+- `+`/`-` or the scroll wheel zoom, and `h j k l`, the arrow keys, or dragging pan
+- `f` fits the diagram to the screen and `1` shows it at actual size
+- `t` switches between the note theme and Mermaid's light and dark looks
+- `[`/`]` move between the diagrams in a note
+- `e` jumps to the source, `y` copies it, and `?` lists every control
+
+Flowcharts, sequence, class, state, ER, Gantt, pie, mindmap, timeline, and most other Mermaid diagram types are supported, along with `%%{init: ...}%%` theme settings. Diagrams need a terminal with image support. `diagram_height` limits how many rows a diagram takes inside a note:
+
+```toml
+[general]
+diagram_height = 20
+```
+
 ### Blockquotes
 
 > Blockquotes are rendered with a colored border.

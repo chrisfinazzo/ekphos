@@ -277,6 +277,7 @@ impl AppBuilder {
                 changelog_links: Vec::new(),
                 theme_picker: None,
                 editor_mode_selected: EditingMode::Standard,
+                diagram_viewer: None,
             },
             dependencies,
         };
@@ -293,6 +294,7 @@ impl AppBuilder {
 }
 
 mod attachments;
+mod diagrams;
 mod document;
 mod editing;
 mod graph_state;
